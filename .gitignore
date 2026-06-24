@@ -1,0 +1,45 @@
+# Data
+data/
+*.csv
+
+# Model artifacts
+models/
+
+# LTA DataMall shapefile (large, not redistributable)
+TrainStation_Mar2026/
+
+# Reference notebooks (inspiration, not part of this project)
+1_feature_engineering+EDA.ipynb
+2_model_building.ipynb
+README copy.md
+
+# Executed notebook outputs
+*_executed.ipynb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# OS
+Thumbs.db
