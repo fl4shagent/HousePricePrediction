@@ -1,7 +1,8 @@
 import os
-import requests
-import pandas as pd
 import time
+
+import pandas as pd
+import requests
 
 # os is used by fetch_all_resale_transactions
 

@@ -6,39 +6,53 @@ with task dependencies, retries, caching, and data quality validation.
 Run: python pipeline/flow.py
 """
 
+import json
 import os
 import sys
-import pandas as pd
-import numpy as np
-import joblib
-import json
 
+import joblib
+import numpy as np
+import pandas as pd
 from prefect import flow, task
-from prefect.logging import get_run_logger
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from pipeline.config import (
-    RAW_DIR, INTERIM_DIR, PROCESSED_DIR, MODELS_DIR, SHAPEFILE_PATH,
-    SPLIT_YEAR, SPLIT_MONTH, ENABLE_MACRO_FEATURES,
-    GEOCODING_CONCURRENCY, GEOCODING_BATCH_SIZE, MODEL_VERSION,
+    ENABLE_MACRO_FEATURES,
+    GEOCODING_BATCH_SIZE,
+    GEOCODING_CONCURRENCY,
+    INTERIM_DIR,
+    MODEL_VERSION,
+    MODELS_DIR,
+    PROCESSED_DIR,
+    RAW_DIR,
+    SHAPEFILE_PATH,
+    SPLIT_MONTH,
+    SPLIT_YEAR,
 )
 from src.data_collection import (
-    fetch_all_resale_transactions, get_mrt_stations,
-    get_shopping_malls, fetch_cpi, get_sora_3m, fetch_datagov_csv,
     MATURE_ESTATES,
+    fetch_all_resale_transactions,
+    fetch_cpi,
+    fetch_datagov_csv,
+    get_mrt_stations,
+    get_sora_3m,
 )
 from src.feature_engineering import (
-    geocode_buildings, geocode_schools,
-    compute_nearest_mrt, compute_nearest_from_locations,
-    compute_cbd_distance, compute_nearest_school_by_level,
     classify_elite_school,
+    compute_cbd_distance,
+    compute_nearest_from_locations,
+    compute_nearest_mrt,
+    compute_nearest_school_by_level,
+    geocode_buildings,
+    geocode_schools,
 )
 from src.preprocessing import (
-    parse_remaining_lease, parse_storey_range,
-    convert_yn_to_bool, extract_transaction_date,
+    convert_yn_to_bool,
+    extract_transaction_date,
+    parse_remaining_lease,
+    parse_storey_range,
 )
-
 
 # ─── DATA INGESTION ──────────────────────────────────────────────────────────
 
@@ -318,9 +332,9 @@ def validate_data(df_train, df_test):
 
 @task(log_prints=True)
 def train_models(df_train):
-    from sklearn.compose import ColumnTransformer
-    from sklearn.preprocessing import StandardScaler, OneHotEncoder
     from lightgbm import LGBMRegressor
+    from sklearn.compose import ColumnTransformer
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
     from xgboost import XGBRegressor
 
     TARGET = "resale_price"

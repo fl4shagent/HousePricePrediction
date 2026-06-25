@@ -1,6 +1,7 @@
-import pandas as pd
-import numpy as np
 import re
+
+import numpy as np
+import pandas as pd
 
 
 def parse_remaining_lease(series: pd.Series, month_col: pd.Series, lease_commence_col: pd.Series) -> pd.Series:

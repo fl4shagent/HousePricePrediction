@@ -1,7 +1,9 @@
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from api.schemas import PredictionRequest, PredictionResponse
+
+from fastapi import FastAPI
+
 from api.predict import load_models, predict_price
+from api.schemas import PredictionRequest, PredictionResponse
 
 
 @asynccontextmanager

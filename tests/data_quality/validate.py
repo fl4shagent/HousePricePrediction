@@ -8,17 +8,18 @@ Three validation suites:
 Run: python tests/data_quality/validate.py
 """
 
+import os
+
 import great_expectations as gx
+import pandas as pd
 from great_expectations.expectations import (
+    ExpectColumnMeanToBeBetween,
     ExpectColumnToExist,
-    ExpectColumnValuesToNotBeNull,
     ExpectColumnValuesToBeBetween,
     ExpectColumnValuesToBeInSet,
+    ExpectColumnValuesToNotBeNull,
     ExpectTableRowCountToBeBetween,
-    ExpectColumnMeanToBeBetween,
 )
-import pandas as pd
-import os
 
 
 def _validate(df: pd.DataFrame, suite_name: str, expectations: list) -> dict:

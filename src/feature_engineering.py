@@ -1,9 +1,10 @@
-import pandas as pd
-import numpy as np
-import aiohttp
 import asyncio
-import nest_asyncio
 import os
+
+import aiohttp
+import nest_asyncio
+import numpy as np
+import pandas as pd
 from geopy.distance import geodesic
 
 nest_asyncio.apply()
