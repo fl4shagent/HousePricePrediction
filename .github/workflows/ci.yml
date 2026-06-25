@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy scikit-learn lightgbm xgboost geopy pyproj
+          pip install fastapi uvicorn joblib
+          pip install great-expectations
+          pip install ruff pytest
+
+      - name: Lint with ruff
+        run: ruff check src/ api/ pipeline/ tests/ --select E,F,I --ignore E501
+
+      - name: Unit tests — preprocessing
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from src.preprocessing import parse_storey_range, extract_transaction_date
+          import pandas as pd, numpy as np
+
+          # Test storey range parsing
+          s = pd.Series(['01 TO 03', '04 TO 06', '10 TO 12', '01 TO 05'])
+          result = parse_storey_range(s)
+          assert result[0] == 2.0, f'Expected 2.0, got {result[0]}'
+          assert result[1] == 5.0, f'Expected 5.0, got {result[1]}'
+          assert result[2] == 11.0, f'Expected 11.0, got {result[2]}'
+          assert result[3] == 3.0, f'Expected 3.0, got {result[3]}'
+          print('storey_range parsing: PASSED')
+
+          # Test date extraction
+          df = pd.DataFrame({'month': ['2024-03', '2025-11']})
+          df = extract_transaction_date(df)
+          assert df['transaction_year'].tolist() == [2024, 2025]
+          assert df['transaction_month'].tolist() == [3, 11]
+          print('date extraction: PASSED')
+
+          print('All preprocessing tests passed')
+          "
+
+      - name: Unit tests — API schemas
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from api.schemas import PredictionRequest, PredictionResponse
+
+          # Test valid request
+          req = PredictionRequest(
+              town='ANG MO KIO', flat_type='4 ROOM', floor_area_sqm=93.0,
+              flat_model='New Generation', storey_range='07 TO 09',
+              remaining_lease='61 years 04 months', block='406',
+              street_name='ANG MO KIO AVE 10', transaction_month='2025-10'
+          )
+          assert req.town == 'ANG MO KIO'
+          assert req.floor_area_sqm == 93.0
+          print('PredictionRequest validation: PASSED')
+
+          # Test response
+          resp = PredictionResponse(
+              predicted_price=500000.0,
+              predicted_price_formatted='\$500,000',
+              model_version='v3_macro',
+              features_used=230
+          )
+          assert resp.predicted_price == 500000.0
+          print('PredictionResponse validation: PASSED')
+
+          print('All schema tests passed')
+          "
+
+      - name: Unit tests — data collection helpers
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from src.data_collection import get_sora_3m, get_shopping_malls, MATURE_ESTATES
+
+          # Test SORA data
+          sora = get_sora_3m()
+          assert len(sora) > 300, f'Expected 300+ SORA rows, got {len(sora)}'
+          assert 'year' in sora.columns
+          assert 'sora_3m' in sora.columns
+          assert sora['sora_3m'].min() >= 0
+          print(f'SORA data: PASSED ({len(sora)} months)')
+
+          # Test shopping malls
+          malls = get_shopping_malls()
+          assert len(malls) > 80, f'Expected 80+ malls, got {len(malls)}'
+          assert all(1.2 < lat < 1.5 for lat in malls['lat'])
+          print(f'Shopping malls: PASSED ({len(malls)} malls)')
+
+          # Test mature estates
+          assert 'ANG MO KIO' in MATURE_ESTATES
+          assert 'PUNGGOL' not in MATURE_ESTATES
+          assert len(MATURE_ESTATES) == 15
+          print(f'Mature estates: PASSED ({len(MATURE_ESTATES)} towns)')
+
+          print('All data collection tests passed')
+          "
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          # Create minimal model/data stubs for build test
+          mkdir -p models data/interim
+          echo '{}' > models/feature_config.json
+          touch models/lgbm_model.joblib models/xgb_model.joblib models/preprocessor.joblib
+          echo 'block,street_name,latitude,longitude' > data/interim/building_geocodes.csv
+          echo 'block,street_name,dist_to_cbd_km,dist_to_nearest_mall_km,dist_to_nearest_hawker_km' > data/interim/spatial_distances.csv
+          echo 'block,street_name,is_elite_closest_pri_sch,is_elite_closest_sec_sch,is_elite_closest_mixed_sch' > data/interim/school_flags.csv
+          echo 'block,street_name,nearest_carpark_dist_km,nearest_carpark_type' > data/interim/carpark_features.csv
+          docker build -t hdb-predictor .
+          echo "Docker build: PASSED"

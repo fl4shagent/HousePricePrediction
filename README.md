@@ -1,5 +1,7 @@
 # Singapore HDB Resale Price Prediction
 
+![CI](https://github.com/fl4shagent/HousePricePrediction/actions/workflows/ci.yml/badge.svg)
+
 An end-to-end machine learning pipeline that predicts Singapore HDB resale flat prices. Trained on **667,327 transactions spanning 25 years (2000–2025)** across all 26 HDB towns, the model predicts resale prices for any HDB flat given its location, size, lease, and market conditions.
 
 ### What it predicts
