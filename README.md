@@ -333,7 +333,93 @@ Three model iterations, each building on the previous:
 
 ---
 
-## 6. Tech Stack
+## 6. Data Engineering Infrastructure
+
+### FastAPI Prediction API
+
+A REST endpoint that serves predictions using the trained ensemble model.
+
+```bash
+uvicorn api.main:app --port 8000
+```
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/predict` | POST | Accepts flat details, returns predicted price |
+| `/healthz` | GET | Health check |
+
+Features are resolved via **pre-computed lookup tables** from `data/interim/` — no live API calls at prediction time. Response includes predicted price, model version, and feature count.
+
+### Docker Containerization
+
+```bash
+docker compose up        # Start API on port 8000
+curl localhost:8000/healthz  # → {"status": "ok"}
+```
+
+Multi-stage Dockerfile (builder + runtime) copies only `api/`, `src/`, `models/`, and `data/interim/` into the container. Health check configured in `docker-compose.yml`.
+
+### Data Quality Validation (Great Expectations)
+
+Three validation suites run **before model training** to catch data issues early:
+
+```bash
+python tests/data_quality/validate.py
+```
+
+| Suite | Expectations | What It Checks |
+|-------|-------------|----------------|
+| Raw Transactions | 16 | Nulls, price range ($10k-$3M), flat types, row count |
+| Geocoded Buildings | 7 | Singapore lat/lng bounds (1.2-1.5, 103.6-104.1), 95%+ success rate |
+| Processed Training | 13 | Zero nulls contract, feature ranges, price mean sanity |
+
+**Total: 36 expectations, all passing.** If any expectation fails, the Prefect pipeline blocks downstream model training — preventing models from being trained on corrupted data.
+
+### Prefect Pipeline Orchestration
+
+The full notebook pipeline converted into a production-ready orchestrated flow:
+
+```bash
+python pipeline/flow.py
+```
+
+**Pipeline DAG:**
+
+```
+fetch_transactions ─┐
+fetch_mrt_stations ──┤
+fetch_schools ───────┤
+fetch_property_info ─┤
+fetch_macro_data ────┘
+         │
+    clean_transactions
+         │
+    ┌────┴────────────────────────┐
+geocode_buildings          geocode_schools
+    │                            │
+compute_mrt_distances    compute_school_flags
+    │                            │
+    ├── compute_spatial_features ─┤
+    ├── compute_carpark_features ─┘
+    │
+assemble_features
+    │
+split_and_save
+    │
+validate_data  ← Great Expectations checkpoint
+    │
+train_models
+```
+
+**Key features:**
+- `@task(retries=3, retry_delay_seconds=30)` on all API-dependent tasks
+- All geospatial computations use `data/interim/` caching — first run ~75 min, subsequent runs <1 min
+- Data quality validation blocks training if expectations fail
+- Configurable via `pipeline/config.py` (split date, macro toggle, model version)
+
+---
+
+## 7. Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
@@ -343,52 +429,74 @@ Three model iterations, each building on the previous:
 | ML | scikit-learn, LightGBM, XGBoost |
 | Visualization | matplotlib, seaborn |
 | API | FastAPI, uvicorn |
+| Containerization | Docker, Docker Compose |
+| Orchestration | Prefect |
+| Data Quality | Great Expectations |
 | External APIs | OneMap (geocoding), data.gov.sg, LTA DataMall |
 
 ---
 
-## 7. Project Structure
+## 8. Project Structure
 
 ```
 HousePricePrediction/
+├── api/                              # FastAPI prediction endpoint
+│   ├── main.py                       # App with /predict and /healthz
+│   ├── schemas.py                    # Pydantic request/response models
+│   └── predict.py                    # Feature lookup + ensemble prediction
+├── pipeline/                         # Prefect orchestration
+│   ├── flow.py                       # Full pipeline DAG
+│   └── config.py                     # Tuneable parameters
+├── tests/
+│   └── data_quality/
+│       └── validate.py               # Great Expectations suites (36 expectations)
 ├── notebooks/
-│   ├── 0_data_collection.ipynb      # Fetch all raw datasets
-│   ├── 1_eda.ipynb                  # Exploratory data analysis
-│   ├── 2_feature_engineering.ipynb  # Feature engineering + preprocessing
-│   ├── 3_model_building.ipynb       # Train, evaluate, compare models
-│   └── 4_hyperparameter_tuning.ipynb
+│   ├── 0_data_collection.ipynb       # Fetch all raw datasets
+│   ├── 1_eda.ipynb                   # Exploratory data analysis
+│   ├── 2_feature_engineering.ipynb   # Feature engineering + preprocessing
+│   ├── 3_model_building.ipynb        # Train, evaluate, compare models
+│   └── 4_hyperparameter_tuning.ipynb # RandomizedSearchCV tuning
 ├── src/
-│   ├── data_collection.py           # API fetch, MRT stations, mall list
-│   ├── feature_engineering.py       # Geocoding, distance computation
-│   └── preprocessing.py             # Parsing, type conversion
+│   ├── data_collection.py            # API fetch, MRT stations, mall list
+│   ├── feature_engineering.py        # Geocoding, distance computation
+│   └── preprocessing.py              # Parsing, type conversion
 ├── data/
-│   ├── raw/                         # Downloaded CSVs (gitignored)
-│   ├── interim/                     # Cached geospatial computations
-│   └── processed/                   # Final train/test splits
-├── models/
-│   ├── v2_resplit/                  # Without macro features
-│   ├── v3_macro/                    # With SORA + CPI
-│   └── *.joblib                     # Latest model artifacts
-├── api/                             # FastAPI prediction endpoint
-├── results_baseline.md              # Baseline results for comparison
-├── progress.md                      # Development log
-└── roadmap.md                       # Future improvements
+│   ├── raw/                          # Downloaded CSVs (gitignored)
+│   ├── interim/                      # Cached geospatial computations
+│   └── processed/                    # Final train/test splits
+├── models/                           # Versioned model artifacts (gitignored)
+├── Dockerfile                        # Multi-stage container build
+├── docker-compose.yml                # Container orchestration
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## 8. How to Run
+## 9. How to Run
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Run notebooks in order
+# Option A: Run notebooks interactively
 # 0: Data collection (fetches from APIs, ~5 min first run)
 # 1: EDA (read-only analysis)
 # 2: Feature engineering (~75 min first run, <1 min with cache)
 # 3: Model building (~10 min)
 # 4: Hyperparameter tuning (~100 min, optional)
+
+# Option B: Run the full pipeline
+python pipeline/flow.py
+
+# Option C: Run data quality checks only
+python tests/data_quality/validate.py
+
+# Serve predictions
+uvicorn api.main:app --port 8000
+
+# Or with Docker
+docker compose up
 ```
 
 Notebooks are numbered and must be run in order. All intermediate computations are cached to `data/interim/` — subsequent runs are fast.
