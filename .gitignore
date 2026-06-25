@@ -13,6 +13,12 @@ TrainStation_Mar2026/
 2_model_building.ipynb
 README copy.md
 
+# Claude Code config (local, not project-relevant)
+.claude/agents/
+.claude/settings.json
+.claude/settings.local.json
+.claude/plans/
+
 # Executed notebook outputs
 *_executed.ipynb
 

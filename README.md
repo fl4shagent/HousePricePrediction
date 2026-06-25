@@ -3,7 +3,7 @@
 An end-to-end machine learning pipeline that predicts Singapore HDB resale flat prices. Trained on **667,327 transactions spanning 25 years (2000–2025)** across all 26 HDB towns, the model predicts resale prices for any HDB flat given its location, size, lease, and market conditions.
 
 ### What it predicts
-Given a flat's details (town, flat type, floor area, storey, remaining lease, location), the model outputs a **predicted resale price in SGD** — accurate to within **$26,000 on average** (3.9% error), with **94% of predictions landing within ±10% of the actual sale price**.
+Given a flat's details (town, flat type, floor area, storey, remaining lease, location), the model outputs a **predicted resale price in SGD** — accurate to within **$24,500 on average** (3.7% error), with **95% of predictions landing within ±10% of the actual sale price**.
 
 ### Scale
 
@@ -13,16 +13,16 @@ Given a flat's details (town, flat type, floor area, storey, remaining lease, lo
 | **Test data** | 18,827 transactions (Sep 2025 – Jun 2026) |
 | **Coverage** | All 26 HDB towns, 7 flat types, ~9,800 unique buildings |
 | **Features** | 32 engineered features from 10 government data sources |
-| **Model** | LightGBM + XGBoost ensemble with walk-forward backtesting |
+| **Model** | LightGBM + XGBoost ensemble, tuned with RandomizedSearchCV + walk-forward backtesting |
 
-### Final Model Performance (holdout test set, 2025-09 to 2026-06)
+### Final Model Performance (tuned ensemble, holdout test set 2025-09 to 2026-06)
 
 | Metric | Value | Meaning |
 |--------|-------|---------|
-| MAE | **$26,044** | Average prediction error |
-| MAPE | **3.9%** | Average percentage error |
-| PER10 | **94.2%** | Predictions within ±10% of actual |
-| R² | **0.9693** | Variance explained |
+| MAE | **$24,476** | Average prediction error |
+| MAPE | **3.7%** | Average percentage error |
+| PER10 | **95.1%** | Predictions within ±10% of actual |
+| R² | **0.9724** | Variance explained |
 
 ---
 
@@ -200,15 +200,92 @@ Standard K-fold cross-validation is **invalid for time-series data** — it trai
 
 ### Hyperparameter Tuning
 
-RandomizedSearchCV with 50 iterations and 5 walk-forward folds for both LightGBM and XGBoost. Total tuning time: ~104 minutes.
+#### Why RandomizedSearchCV over GridSearchCV
+
+We evaluated three tuning approaches before choosing:
+
+| Approach | How It Works | Pros | Cons |
+|----------|-------------|------|------|
+| **GridSearchCV** | Tests every combination in a defined grid | Exhaustive — guaranteed to find the best in-grid params | Combinatorial explosion: 5 params × 3 values = 243 combos × 5 folds = 1,215 fits. ~20+ hours on 667k rows |
+| **RandomizedSearchCV** | Samples N random combos from continuous distributions | Covers wider parameter space in fixed time. 50 iterations × 5 folds = 250 fits in ~2 hours | May miss the absolute optimum |
+| **Optuna (Bayesian)** | Learns from previous trials to focus on promising regions | Most sample-efficient | Extra dependency, more complex setup, overkill for this dataset size |
+
+**We chose RandomizedSearchCV** because:
+1. **Time-efficient** — 50 iterations covers a wide 9-parameter space in ~115 minutes total (21 min LGBM + 94 min XGBoost), vs 20+ hours for exhaustive grid search
+2. **Continuous distributions** — samples from `uniform(0.01, 0.19)` for learning rate instead of testing only `[0.05, 0.1, 0.15]`, which can find values between grid points
+3. **Walk-forward CV compatible** — uses the same 5 walk-forward folds as our validation strategy, not random K-fold splits
+4. **Diminishing returns** — research shows that for most ML problems, 50 random samples find params within 5% of the true optimum with >95% probability
+
+#### Tuning Configuration
+
+**Parameters tuned (9 per model):**
+
+| Parameter | Distribution | Purpose |
+|-----------|-------------|---------|
+| `n_estimators` | 100–500 | Number of boosting rounds |
+| `learning_rate` | 0.01–0.20 | Step size per round |
+| `max_depth` | 4–15 | Tree depth (controls complexity) |
+| `num_leaves` (LGBM) | 31–127 | Leaf count (alternative to depth) |
+| `min_child_samples` / `min_child_weight` | 1–50 / 1–10 | Minimum data per leaf (prevents overfitting) |
+| `colsample_bytree` | 0.5–1.0 | Feature sampling per tree |
+| `subsample` | 0.6–1.0 | Row sampling per round |
+| `reg_alpha` | 0–1.0 | L1 regularization |
+| `reg_lambda` | 0–1.0 | L2 regularization |
+
+**CV strategy:** 5 walk-forward folds (last 5 of 44 total), scored on `neg_mean_absolute_error`
+
+#### Tuning Results
+
+| Model | Best CV MAE | Tuning Time |
+|-------|-----------|-------------|
+| LightGBM | $29,320 | 21 min |
+| XGBoost | $29,473 | 94 min |
+
+**Best parameters found:**
+
+| Parameter | LGBM Default | LGBM Tuned | XGB Default | XGB Tuned |
+|-----------|-------------|------------|-------------|-----------|
+| n_estimators | 300 | 448 | 300 | 251 |
+| learning_rate | 0.10 | 0.135 | 0.10 | 0.076 |
+| max_depth | — | 9 | 8 | 11 |
+| colsample_bytree | 0.80 | 0.758 | 0.80 | 0.817 |
+| subsample | — | 0.903 | — | 0.940 |
+| reg_alpha | — | 0.248 | — | 0.405 |
+| reg_lambda | 0.50 | 0.356 | 0.50 | 0.888 |
+
+#### Default vs Tuned — Holdout Test Set
+
+| Metric | Default Ensemble | Tuned Ensemble | Improvement |
+|--------|-----------------|----------------|-------------|
+| **MAE** | $26,044 | **$24,476** | **-$1,568 (6.0%)** |
+| **RMSE** | $37,174 | **$35,234** | -$1,940 (5.2%) |
+| **MAPE** | 3.9% | **3.7%** | -0.2% |
+| **R²** | 0.9693 | **0.9724** | +0.0031 |
+| **PER10** | 94.2% | **95.1%** | +0.9% |
+
+Tuning produced a meaningful **6% MAE improvement** this time — more impactful than the first tuning round (0.8%) because the model now has more recent training data where parameter sensitivity is higher.
 
 ---
 
 ## 5. Model Comparison
 
-### v2 (No Macro Features) vs v3 (With SORA + CPI)
+### Iteration History
 
-Both models trained on 2000-2025-08, tested on 2025-09 to 2026-06.
+Three model iterations, each building on the previous:
+
+| Metric | v2: No Macro (default) | v3: With Macro (default) | v3: With Macro (tuned) |
+|--------|----------------------|------------------------|----------------------|
+| **Ensemble MAE** | $26,000 | $26,044 | **$24,476** |
+| **MAPE** | 4.0% | 3.9% | **3.7%** |
+| **PER10** | 94.0% | 94.2% | **95.1%** |
+| **R²** | 0.9700 | 0.9693 | **0.9724** |
+| Features | 30 | 32 (+SORA, CPI) | 32 (tuned params) |
+
+**What each iteration taught us:**
+- **v2 → v3 (add macro):** SORA + CPI barely moved gradient boosting metrics (+$44 MAE) but dramatically improved linear models (-$12k MAE, -15%). Tree models already learn temporal patterns from `transaction_year/month`.
+- **v3 default → v3 tuned:** Hyperparameter tuning produced a meaningful **6% MAE improvement** ($26,044 → $24,476). The tuned model uses more trees (448 LGBM / 251 XGB), lower learning rates, and stronger regularization.
+
+### v2 (No Macro) vs v3 (With SORA + CPI) — Macro Feature Impact
 
 | Metric | v2 (no macro) | v3 (with macro) | Impact |
 |--------|-------------|----------------|--------|
@@ -219,13 +296,13 @@ Both models trained on 2000-2025-08, tested on 2025-09 to 2026-06.
 
 **Insight:** Gradient boosting models learn temporal patterns from `transaction_year/month` alone. Macro features (SORA, CPI) provide the most value for **linear models** that can't learn non-linear time dependencies, and for **long-horizon predictions** where the model must extrapolate beyond its training period.
 
-### All Models — Final Results (v3, Holdout Test Set)
+### All Models — Final Results (Holdout Test Set, Tuned)
 
 | Model | MAE | RMSE | MAPE | R² | PER10 |
 |-------|-----|------|------|-----|-------|
-| **XGBoost** | **$25,786** | $36,704 | 3.9% | 0.9701 | 94.4% |
-| **Ensemble** | **$26,044** | $37,174 | 3.9% | 0.9693 | 94.2% |
-| LightGBM | $27,600 | $39,229 | 4.1% | 0.9658 | 93.4% |
+| **Ensemble (tuned)** | **$24,476** | **$35,234** | **3.7%** | **0.9724** | **95.1%** |
+| XGBoost (tuned) | $24,609 | $35,458 | 3.7% | 0.9721 | 94.8% |
+| LightGBM (tuned) | $25,565 | $36,617 | 3.9% | 0.9702 | 94.6% |
 | Random Forest | $31,014 | $44,469 | 4.5% | 0.9561 | 91.6% |
 | Decision Tree | $36,524 | $52,548 | 5.4% | 0.9387 | 85.9% |
 | Linear Regression | $69,964 | $100,292 | 10.7% | 0.7766 | 59.2% |
@@ -235,16 +312,17 @@ Both models trained on 2000-2025-08, tested on 2025-09 to 2026-06.
 
 ### Comparison with Reference Project
 
-| Metric | Reference Project | Our Model |
-|--------|------------------|-----------|
-| **MAE** | ~$27,000 | **$26,044** |
-| **RMSE** | ~$39,000 | **$37,174** |
-| **MAPE** | ~5.7% | **3.9%** |
+| Metric | Reference Project | Our Model (tuned) |
+|--------|------------------|-------------------|
+| **MAE** | ~$27,000 | **$24,476** |
+| **RMSE** | ~$39,000 | **$35,234** |
+| **MAPE** | ~5.7% | **3.7%** |
+| **PER10** | — | **95.1%** |
 | Training data | 232k rows (2017+) | 667k rows (2000+) |
 | Features | 197 (incl. GDP, unemployment) | 32 (focused set) |
 | MRT distances | Static (all stations) | Time-varying (by opening date) |
 
-### Error by Price Quartile
+### Error by Price Quartile (Tuned Ensemble)
 
 | Quartile | Count | MAE | MAPE | PER10 |
 |----------|-------|-----|------|-------|

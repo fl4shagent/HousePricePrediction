@@ -1,0 +1,16 @@
+notebooks/
+TrainStation_Mar2026/
+.git/
+.claude/
+__pycache__/
+*.ipynb
+*.pyc
+data/raw/
+data/processed/
+1_feature_engineering+EDA.ipynb
+2_model_building.ipynb
+README copy.md
+progress.md
+roadmap.md
+results_baseline.md
+.DS_Store
